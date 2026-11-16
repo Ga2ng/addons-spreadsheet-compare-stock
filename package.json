@@ -1,0 +1,15 @@
+{
+  "name": "addons-spreadsheet-so",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Google Spreadsheet Add-on - SO",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "login": "npx @google/clasp login",
+    "login:no-local": "npx @google/clasp login --no-localhost",
+    "logout": "npx @google/clasp logout",
+    "status": "npm run build && npx @google/clasp status",
+    "push": "npm run build && npx @google/clasp push -f",
+    "open": "npx @google/clasp open"
+  }
+}

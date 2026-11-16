@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        padding: 12px;
+        margin: 0;
+        color: #202124;
+        background-color: #f8f9fa;
+        font-size: 13px;
+      }
+      .card {
+        background: #ffffff;
+        border: 1px solid #dadce0;
+        border-radius: 8px;
+        padding: 14px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 2px rgba(60,64,67,0.1);
+      }
+      h2 {
+        font-size: 15px;
+        margin-top: 0;
+        margin-bottom: 6px;
+        color: #1a73e8;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      p.desc {
+        font-size: 12px;
+        color: #5f6368;
+        margin-top: 0;
+        margin-bottom: 12px;
+        line-height: 1.4;
+      }
+      .form-group {
+        margin-bottom: 12px;
+      }
+      label {
+        display: block;
+        font-weight: 500;
+        margin-bottom: 5px;
+        font-size: 12px;
+        color: #3c4043;
+      }
+      select {
+        width: 100%;
+        padding: 7px 10px;
+        border: 1px solid #dadce0;
+        border-radius: 4px;
+        font-size: 13px;
+        background-color: #fff;
+        color: #202124;
+        outline: none;
+      }
+      select:focus {
+        border-color: #1a73e8;
+      }
+      .radio-group {
+        display: flex;
+        gap: 8px;
+      }
+      .radio-btn {
+        flex: 1;
+        border: 1px solid #dadce0;
+        border-radius: 4px;
+        padding: 8px 4px;
+        text-align: center;
+        font-size: 12px;
+        cursor: pointer;
+        background: #fff;
+        transition: all 0.2s;
+        user-select: none;
+      }
+      .radio-btn input {
+        display: none;
+      }
+      .radio-btn.active {
+        background-color: #e8f0fe;
+        border-color: #1a73e8;
+        color: #1a73e8;
+        font-weight: 600;
+      }
+      .checkbox-container {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+        padding: 8px 10px;
+        background-color: #f1f8ff;
+        border: 1px solid #c8e1ff;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .checkbox-container input {
+        cursor: pointer;
+      }
+      .checkbox-container label {
+        margin-bottom: 0;
+        cursor: pointer;
+        font-size: 12px;
+        color: #0366d6;
+        font-weight: 500;
+      }
+      .btn-container {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      .btn {
+        border: none;
+        padding: 9px 12px;
+        font-size: 13px;
+        font-weight: 500;
+        border-radius: 4px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        transition: background-color 0.2s;
+      }
+      .btn-primary {
+        background-color: #1a73e8;
+        color: #ffffff;
+      }
+      .btn-primary:hover {
+        background-color: #1557b0;
+      }
+      .btn-secondary {
+        background-color: #ffffff;
+        color: #3c4043;
+        border: 1px solid #dadce0;
+      }
+      .btn-secondary:hover {
+        background-color: #f1f3f4;
+      }
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .stats-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .stat-box {
+        padding: 8px 6px;
+        border-radius: 6px;
+        text-align: center;
+      }
+      .stat-val {
+        font-size: 15px;
+        font-weight: bold;
+      }
+      .stat-label {
+        font-size: 11px;
+        color: #5f6368;
+      }
+      .stat-match {
+        background-color: #e6f4ea;
+        color: #137333;
+      }
+      .stat-converted {
+        background-color: #e0f2f1;
+        color: #00695c;
+      }
+      .stat-diff {
+        background-color: #fce8e6;
+        color: #c5221f;
+      }
+      .stat-notfound {
+        background-color: #f1f3f4;
+        color: #5f6368;
+      }
+      .badge {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 11px;
+        font-weight: 500;
+      }
+      .badge-match {
+        background: #e6f4ea;
+        color: #137333;
+      }
+      .badge-converted {
+        background: #e0f2f1;
+        color: #00695c;
+      }
+      .badge-diff {
+        background: #fce8e6;
+        color: #c5221f;
+      }
+      .badge-notfound {
+        background: #f1f3f4;
+        color: #5f6368;
+      }
+      .preview-list {
+        max-height: 240px;
+        overflow-y: auto;
+        margin-top: 10px;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        background: #fff;
+      }
+      .preview-item {
+        padding: 8px 10px;
+        border-bottom: 1px solid #f1f3f4;
+        font-size: 12px;
+      }
+      .preview-item:last-child {
+        border-bottom: none;
+      }
+      .item-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 3px;
+      }
+      .item-name {
+        font-weight: 600;
+        color: #202124;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 190px;
+      }
+      .item-detail {
+        font-size: 11px;
+        color: #5f6368;
+        display: flex;
+        justify-content: space-between;
+      }
+      .item-note {
+        font-size: 10.5px;
+        color: #00695c;
+        margin-top: 3px;
+        font-style: italic;
+      }
+      .alert {
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        margin-top: 8px;
+        display: none;
+      }
+      .alert-success {
+        background-color: #e6f4ea;
+        color: #137333;
+        border: 1px solid #ceead6;
+      }
+      .alert-error {
+        background-color: #fce8e6;
+        color: #c5221f;
+        border: 1px solid #fad2cf;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>⚖️ Compare Stock SO</h2>
+      <p class="desc">Bandingkan Stok Lapangan (Aktual) vs Stok Sistem secara cerdas & otomatis.</p>
+      
+      <!-- Pilihan Sheet Aktual -->
+      <div class="form-group">
+        <label for="selectSheetAktual">Sheet Stok Lapangan / Aktual:</label>
+        <select id="selectSheetAktual">
+          <option value="">Memuat sheet...</option>
+        </select>
+      </div>
+
+      <!-- Pilihan Sheet Sistem -->
+      <div class="form-group">
+        <label for="selectSheetSistem">Sheet Stok Sistem:</label>
+        <select id="selectSheetSistem">
+          <option value="">Memuat sheet...</option>
+        </select>
+      </div>
+
+      <!-- Pilihan Lokasi -->
+      <div class="form-group">
+        <label>Pilih Bagian / Lokasi yang Dibandingkan:</label>
+        <div class="radio-group">
+          <div class="radio-btn active" onclick="setLokasi('TOTAL', this)">
+            <input type="radio" name="lokasi" value="TOTAL" checked>
+            Total (All)
+          </div>
+          <div class="radio-btn" onclick="setLokasi('GUDANG', this)">
+            <input type="radio" name="lokasi" value="GUDANG">
+            Gudang
+          </div>
+          <div class="radio-btn" onclick="setLokasi('SECTION', this)">
+            <input type="radio" name="lokasi" value="SECTION">
+            Section
+          </div>
+        </div>
+      </div>
+
+      <!-- Auto Konversi Parameter -->
+      <div class="checkbox-container" onclick="toggleCheckbox(event)">
+        <input type="checkbox" id="checkConversion" checked>
+        <label for="checkConversion">⚡ Auto-Konversi Satuan (@Gram/@Pack/Porsi)</label>
+      </div>
+
+      <!-- Tombol Aksi -->
+      <div class="btn-container">
+        <button id="btnCetak" class="btn btn-primary" onclick="handleCetakSheet()">
+          🖨️ Cetak Hasil ke Sheet
+        </button>
+        <button id="btnDownload" class="btn btn-secondary" onclick="handleDownloadJson()">
+          💾 Download Hasil JSON
+        </button>
+      </div>
+
+      <div id="alertBox" class="alert"></div>
+    </div>
+
+    <!-- Hasil Ringkasan -->
+    <div id="resultCard" class="card" style="display: none;">
+      <h2 style="font-size: 14px; margin-bottom: 8px;">📊 Ringkasan Hasil</h2>
+      <div class="stats-grid">
+        <div class="stat-box stat-match">
+          <div id="statDirect" class="stat-val">0</div>
+          <div class="stat-label">Cocok Langsung</div>
+        </div>
+        <div class="stat-box stat-converted">
+          <div id="statConverted" class="stat-val">0</div>
+          <div class="stat-label">Cocok Konversi (@)</div>
+        </div>
+        <div class="stat-box stat-diff">
+          <div id="statDiff" class="stat-val">0</div>
+          <div class="stat-label">Ada Selisih</div>
+        </div>
+        <div class="stat-box stat-notfound">
+          <div id="statNotFound" class="stat-val">0</div>
+          <div class="stat-label">Tidak di Sistem</div>
+        </div>
+      </div>
+
+      <div style="margin-top: 12px; font-weight: 500; font-size: 12px;">Daftar Item Perlu Perhatian / Konversi:</div>
+      <div id="previewList" class="preview-list">
+        <!-- Render Preview -->
+      </div>
+    </div>
+
+    <script>
+      let currentLokasi = 'TOTAL';
+      let lastComparisonData = null;
+      let allAvailableSheets = [];
+
+      function setLokasi(val, el) {
+        currentLokasi = val;
+        document.querySelectorAll('.radio-btn').forEach(b => b.classList.remove('active'));
+        el.classList.add('active');
+
+        // Otomatis arahkan sheet sistem jika nama sheet cocok
+        const selectSistem = document.getElementById('selectSheetSistem');
+        if (allAvailableSheets && allAvailableSheets.length > 0) {
+          if (val === 'GUDANG') {
+            const matchGudang = allAvailableSheets.find(s => /gudang/i.test(s));
+            if (matchGudang) selectSistem.value = matchGudang;
+          } else if (val === 'SECTION') {
+            const matchSection = allAvailableSheets.find(s => /section/i.test(s));
+            if (matchSection) selectSistem.value = matchSection;
+          }
+        }
+      }
+
+      function toggleCheckbox(e) {
+        if (e.target.tagName !== 'INPUT') {
+          const cb = document.getElementById('checkConversion');
+          cb.checked = !cb.checked;
+        }
+      }
+
+      function showAlert(msg, isError) {
+        const box = document.getElementById('alertBox');
+        box.style.display = 'block';
+        box.className = 'alert ' + (isError ? 'alert-error' : 'alert-success');
+        box.innerText = msg;
+      }
+
+      function hideAlert() {
+        document.getElementById('alertBox').style.display = 'none';
+      }
+
+      function getSelectedParams() {
+        const sheetAktual = document.getElementById('selectSheetAktual').value;
+        const sheetSistem = document.getElementById('selectSheetSistem').value;
+        const enableConversion = document.getElementById('checkConversion').checked;
+
+        if (!sheetAktual || !sheetSistem) {
+          showAlert('Silakan pilih kedua sheet (Aktual & Sistem) terlebih dahulu!', true);
+          return null;
+        }
+        return {
+          sheetAktual: sheetAktual,
+          sheetSistem: sheetSistem,
+          lokasi: currentLokasi,
+          enableConversion: enableConversion
+        };
+      }
+
+      function handleCetakSheet() {
+        const params = getSelectedParams();
+        if (!params) return;
+
+        hideAlert();
+        setLoading(true, 'Sedang memproses & mencetak hasil ke spreadsheet...');
+
+        google.script.run
+          .withSuccessHandler(function(res) {
+            setLoading(false);
+            showAlert('Berhasil mencetak ke sheet: ' + res.sheetName, false);
+            renderSummary(res.comparisonData);
+          })
+          .withFailureHandler(function(err) {
+            setLoading(false);
+            showAlert('Gagal: ' + (err.message || err), true);
+          })
+          .apiCetakHasil(params);
+      }
+
+      function handleDownloadJson() {
+        const params = getSelectedParams();
+        if (!params) return;
+
+        hideAlert();
+        setLoading(true, 'Menyiapkan data JSON...');
+
+        google.script.run
+          .withSuccessHandler(function(res) {
+            setLoading(false);
+            lastComparisonData = res;
+            renderSummary(res);
+            
+            // Trigger download file JSON
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(res, null, 2));
+            const downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr);
+            const fileName = "COMPARE_STOCK_" + params.lokasi + "_" + (new Date().toISOString().slice(0,10)) + ".json";
+            downloadAnchor.setAttribute("download", fileName);
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+
+            showAlert('File JSON berhasil diunduh!', false);
+          })
+          .withFailureHandler(function(err) {
+            setLoading(false);
+            showAlert('Gagal: ' + (err.message || err), true);
+          })
+          .apiRunComparison(params);
+      }
+
+      function renderSummary(comparison) {
+        lastComparisonData = comparison;
+        const card = document.getElementById('resultCard');
+        card.style.display = 'block';
+
+        const s = comparison.summary;
+        document.getElementById('statDirect').innerText = s.matchDirectCount || 0;
+        document.getElementById('statConverted').innerText = s.matchConvertedCount || 0;
+        document.getElementById('statDiff').innerText = s.selisihCount || 0;
+        document.getElementById('statNotFound').innerText = s.notFoundCount || 0;
+
+        const listEl = document.getElementById('previewList');
+        listEl.innerHTML = '';
+
+        // Tampilkan item selisih, tidak ditemukan, dan item yang cocok via konversi
+        const interestingItems = comparison.items.filter(it => it.status !== 'MATCH');
+        if (interestingItems.length === 0) {
+          listEl.innerHTML = '<div style="padding:10px; text-align:center; color:#137333;">🎉 Semua stok cocok 100%!</div>';
+          return;
+        }
+
+        interestingItems.forEach(it => {
+          const itemDiv = document.createElement('div');
+          itemDiv.className = 'preview-item';
+
+          let badgeClass = 'badge-diff';
+          let badgeText = 'Selisih: ' + it.selisih;
+
+          if (it.status === 'MATCH_CONVERTED') {
+            badgeClass = 'badge-converted';
+            badgeText = 'Sesuai (@' + it.faktorKonversi + ')';
+          } else if (it.status === 'TIDAK_DITEMUKAN') {
+            badgeClass = 'badge-notfound';
+            badgeText = 'Tidak di Sistem';
+          }
+
+          let noteHtml = '';
+          if (it.keteranganKonversi && it.keteranganKonversi !== '-') {
+            noteHtml = `<div class="item-note">💡 ${it.keteranganKonversi}</div>`;
+          }
+
+          itemDiv.innerHTML = `
+            <div class="item-header">
+              <span class="item-name" title="${it.namaAktual}">${it.namaAktual}</span>
+              <span class="badge ${badgeClass}">${badgeText}</span>
+            </div>
+            <div class="item-detail">
+              <span>Fisik: <b>${it.qtyAktual} ${it.satuanAktual || ''}</b></span>
+              <span>Sistem: <b>${it.foundInSystem ? it.qtySistem : '-'} ${it.satuanSistem || ''}</b></span>
+            </div>
+            ${noteHtml}
+          `;
+          listEl.appendChild(itemDiv);
+        });
+      }
+
+      function setLoading(isLoading, text) {
+        const btnCetak = document.getElementById('btnCetak');
+        const btnDownload = document.getElementById('btnDownload');
+        btnCetak.disabled = isLoading;
+        btnDownload.disabled = isLoading;
+        if (isLoading) {
+          showAlert(text || 'Memproses...', false);
+        }
+      }
+
+      window.onload = function() {
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run
+            .withSuccessHandler(function(data) {
+              populateSheets(data.sheets, data.activeSheet);
+            })
+            .withFailureHandler(function(err) {
+              showAlert('Gagal memuat daftar sheet: ' + (err.message || err), true);
+            })
+            .getInitialData();
+        } else {
+          // Fallback lokal / preview
+          populateSheets(['Data Beverage', 'Stok Sistem', 'Sheet1'], 'Data Beverage');
+        }
+      };
+
+      function populateSheets(sheets, activeSheet) {
+        allAvailableSheets = sheets || [];
+        const selectAktual = document.getElementById('selectSheetAktual');
+        const selectSistem = document.getElementById('selectSheetSistem');
+        selectAktual.innerHTML = '';
+        selectSistem.innerHTML = '';
+
+        sheets.forEach(name => {
+          const opt1 = document.createElement('option');
+          opt1.value = name;
+          opt1.innerText = name;
+          selectAktual.appendChild(opt1);
+
+          const opt2 = document.createElement('option');
+          opt2.value = name;
+          opt2.innerText = name;
+          selectSistem.appendChild(opt2);
+        });
+
+        // Set default selection Aktual: prioritaskan 'Data Beverage' atau sheet tanpa kata 'Gudang'/'Section'
+        const defAktual = sheets.find(s => /data\s*beverage/i.test(s)) ||
+                          sheets.find(s => /beverage/i.test(s) && !/gudang|section/i.test(s)) ||
+                          sheets.find(s => /aktual|lapangan/i.test(s)) ||
+                          activeSheet || sheets[0];
+        if (defAktual) selectAktual.value = defAktual;
+
+        // Set default selection Sistem: jika lokasi Gudang -> GUDANG BEVERAGE, dst.
+        const defSistem = sheets.find(s => /gudang/i.test(s)) ||
+                          sheets.find(s => /sistem|system/i.test(s)) ||
+                          (sheets.length > 1 ? sheets[1] : sheets[0]);
+        if (defSistem) selectSistem.value = defSistem;
+      }
+    </script>
+  </body>
+</html>
