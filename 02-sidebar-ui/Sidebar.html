@@ -33,6 +33,30 @@
         align-items: center;
         gap: 6px;
       }
+      .header-title-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 6px;
+      }
+      .btn-refresh {
+        background-color: #ffffff;
+        border: 1px solid #dadce0;
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-size: 11px;
+        font-weight: 500;
+        color: #1a73e8;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        transition: all 0.2s;
+      }
+      .btn-refresh:hover {
+        background-color: #f1f3f4;
+        border-color: #1a73e8;
+      }
       p.desc {
         font-size: 12px;
         color: #5f6368;
@@ -179,8 +203,8 @@
         color: #c5221f;
       }
       .stat-notfound {
-        background-color: #f1f3f4;
-        color: #5f6368;
+        background-color: #ffe8d6;
+        color: #c75b12;
       }
       .badge {
         display: inline-block;
@@ -197,9 +221,17 @@
         background: #e0f2f1;
         color: #00695c;
       }
+      .badge-mint {
+        background: #d1e7dd;
+        color: #0f5132;
+      }
       .badge-diff {
         background: #fce8e6;
         color: #c5221f;
+      }
+      .badge-orange {
+        background: #ffe8d6;
+        color: #c75b12;
       }
       .badge-notfound {
         background: #f1f3f4;
@@ -268,7 +300,12 @@
   </head>
   <body>
     <div class="card">
-      <h2>⚖️ Compare Stock SO</h2>
+      <div class="header-title-row">
+        <h2 style="margin: 0;">⚖️ Compare Stock SO</h2>
+        <button id="btnRefresh" class="btn-refresh" onclick="refreshSheetList()" title="Muat ulang daftar sheet">
+          🔄 Refresh
+        </button>
+      </div>
       <p class="desc">Bandingkan Stok Lapangan (Aktual) vs Stok Sistem secara cerdas & otomatis.</p>
       
       <!-- Pilihan Sheet Aktual -->
@@ -287,19 +324,15 @@
         </select>
       </div>
 
-      <!-- Pilihan Lokasi -->
+      <!-- Pilihan Lokasi (Hanya Gudang & Section) -->
       <div class="form-group">
         <label>Pilih Bagian / Lokasi yang Dibandingkan:</label>
         <div class="radio-group">
-          <div class="radio-btn active" onclick="setLokasi('TOTAL', this)">
-            <input type="radio" name="lokasi" value="TOTAL" checked>
-            Total (All)
-          </div>
-          <div class="radio-btn" onclick="setLokasi('GUDANG', this)">
-            <input type="radio" name="lokasi" value="GUDANG">
+          <div class="radio-btn active" id="btnLokasiGudang" onclick="setLokasi('GUDANG', this)">
+            <input type="radio" name="lokasi" value="GUDANG" checked>
             Gudang
           </div>
-          <div class="radio-btn" onclick="setLokasi('SECTION', this)">
+          <div class="radio-btn" id="btnLokasiSection" onclick="setLokasi('SECTION', this)">
             <input type="radio" name="lokasi" value="SECTION">
             Section
           </div>
@@ -354,25 +387,22 @@
     </div>
 
     <script>
-      let currentLokasi = 'TOTAL';
+      let currentLokasi = 'GUDANG';
       let lastComparisonData = null;
       let allAvailableSheets = [];
 
       function setLokasi(val, el) {
         currentLokasi = val;
-        document.querySelectorAll('.radio-btn').forEach(b => b.classList.remove('active'));
-        el.classList.add('active');
+        document.querySelectorAll('.radio-group .radio-btn').forEach(b => {
+          b.classList.remove('active');
+          const inp = b.querySelector('input');
+          if (inp) inp.checked = false;
+        });
 
-        // Otomatis arahkan sheet sistem jika nama sheet cocok
-        const selectSistem = document.getElementById('selectSheetSistem');
-        if (allAvailableSheets && allAvailableSheets.length > 0) {
-          if (val === 'GUDANG') {
-            const matchGudang = allAvailableSheets.find(s => /gudang/i.test(s));
-            if (matchGudang) selectSistem.value = matchGudang;
-          } else if (val === 'SECTION') {
-            const matchSection = allAvailableSheets.find(s => /section/i.test(s));
-            if (matchSection) selectSistem.value = matchSection;
-          }
+        if (el) {
+          el.classList.add('active');
+          const myInp = el.querySelector('input');
+          if (myInp) myInp.checked = true;
         }
       }
 
@@ -403,10 +433,17 @@
           showAlert('Silakan pilih kedua sheet (Aktual & Sistem) terlebih dahulu!', true);
           return null;
         }
+
+        let lokasiFinal = currentLokasi;
+        const checkedRadio = document.querySelector('.radio-btn.active input, input[name="lokasi"]:checked');
+        if (checkedRadio) {
+          lokasiFinal = checkedRadio.value;
+        }
+
         return {
           sheetAktual: sheetAktual,
           sheetSistem: sheetSistem,
-          lokasi: currentLokasi,
+          lokasi: lokasiFinal,
           enableConversion: enableConversion
         };
       }
@@ -494,9 +531,15 @@
           if (it.status === 'MATCH_CONVERTED') {
             badgeClass = 'badge-converted';
             badgeText = 'Sesuai (@' + it.faktorKonversi + ')';
-          } else if (it.status === 'TIDAK_DITEMUKAN') {
+          } else if (it.status === 'CONVERTED_SYS_ZERO') {
+            badgeClass = 'badge-mint';
+            badgeText = 'Pas Konversi (+' + it.selisih + ')';
+          } else if (it.status === 'TIDAK_ADA_DI_SISTEM') {
+            badgeClass = 'badge-orange';
+            badgeText = 'Tidak Ada di Sistem';
+          } else if (it.status === 'BELUM_TERCATAT' || it.status === 'TIDAK_DITEMUKAN') {
             badgeClass = 'badge-notfound';
-            badgeText = 'Tidak di Sistem';
+            badgeText = 'Belum Tercatat (0/-)';
           }
 
           let noteHtml = '';
@@ -529,7 +572,7 @@
         }
       }
 
-      window.onload = function() {
+      function init() {
         if (typeof google !== 'undefined' && google.script && google.script.run) {
           google.script.run
             .withSuccessHandler(function(data) {
@@ -543,12 +586,55 @@
           // Fallback lokal / preview
           populateSheets(['Data Beverage', 'Stok Sistem', 'Sheet1'], 'Data Beverage');
         }
-      };
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+
+      function refreshSheetList() {
+        const btnRefresh = document.getElementById('btnRefresh');
+        if (btnRefresh) {
+          btnRefresh.disabled = true;
+          btnRefresh.innerText = '⏳ Memuat...';
+        }
+
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run
+            .withSuccessHandler(function(data) {
+              if (btnRefresh) {
+                btnRefresh.disabled = false;
+                btnRefresh.innerText = '🔄 Refresh';
+              }
+              populateSheets(data.sheets, data.activeSheet);
+              showAlert('Daftar sheet berhasil diperbarui!', false);
+              setTimeout(hideAlert, 2500);
+            })
+            .withFailureHandler(function(err) {
+              if (btnRefresh) {
+                btnRefresh.disabled = false;
+                btnRefresh.innerText = '🔄 Refresh';
+              }
+              showAlert('Gagal memuat ulang daftar sheet: ' + (err.message || err), true);
+            })
+            .getInitialData();
+        } else {
+          if (btnRefresh) {
+            btnRefresh.disabled = false;
+            btnRefresh.innerText = '🔄 Refresh';
+          }
+        }
+      }
 
       function populateSheets(sheets, activeSheet) {
         allAvailableSheets = sheets || [];
         const selectAktual = document.getElementById('selectSheetAktual');
         const selectSistem = document.getElementById('selectSheetSistem');
+        const prevAktual = selectAktual.value;
+        const prevSistem = selectSistem.value;
+
         selectAktual.innerHTML = '';
         selectSistem.innerHTML = '';
 
@@ -564,18 +650,25 @@
           selectSistem.appendChild(opt2);
         });
 
-        // Set default selection Aktual: prioritaskan 'Data Beverage' atau sheet tanpa kata 'Gudang'/'Section'
-        const defAktual = sheets.find(s => /data\s*beverage/i.test(s)) ||
-                          sheets.find(s => /beverage/i.test(s) && !/gudang|section/i.test(s)) ||
-                          sheets.find(s => /aktual|lapangan/i.test(s)) ||
-                          activeSheet || sheets[0];
-        if (defAktual) selectAktual.value = defAktual;
+        // Pertahankan pilihan sebelumnya jika masih ada dalam daftar
+        if (prevAktual && sheets.includes(prevAktual)) {
+          selectAktual.value = prevAktual;
+        } else {
+          const defAktual = sheets.find(s => /data\s*beverage/i.test(s)) ||
+                            sheets.find(s => /beverage/i.test(s) && !/gudang|section/i.test(s)) ||
+                            sheets.find(s => /aktual|lapangan/i.test(s)) ||
+                            activeSheet || sheets[0];
+          if (defAktual) selectAktual.value = defAktual;
+        }
 
-        // Set default selection Sistem: jika lokasi Gudang -> GUDANG BEVERAGE, dst.
-        const defSistem = sheets.find(s => /gudang/i.test(s)) ||
-                          sheets.find(s => /sistem|system/i.test(s)) ||
-                          (sheets.length > 1 ? sheets[1] : sheets[0]);
-        if (defSistem) selectSistem.value = defSistem;
+        if (prevSistem && sheets.includes(prevSistem)) {
+          selectSistem.value = prevSistem;
+        } else {
+          const defSistem = sheets.find(s => /gudang/i.test(s)) ||
+                            sheets.find(s => /sistem|system/i.test(s)) ||
+                            (sheets.length > 1 ? sheets[1] : sheets[0]);
+          if (defSistem) selectSistem.value = defSistem;
+        }
       }
     </script>
   </body>

@@ -1,10 +1,11 @@
 /**
  * CompareStock.gs
  * Modul pembanding Stok Lapangan (Aktual) vs Stok Sistem
- * Fitur:
- * 1. Logika Pembagian Jomplang Cerdas (@3970 -> 11910 / 3970 = 3 Pail)
- * 2. Header Bersih: Kolom QTY DISETARAKAN diganti jadi QTY SISTEM (kolom dobel dihapus)
- * 3. Indikator Sesuai & Tidak Sesuai Informatif
+ * Pembaruan:
+ * 1. Perbaikan Akurasi Pembacaan Kolom Section: QTY SECTION vs QTY GUDANG dipisah secara tegas
+ * 2. Sinkronisasi Cerdas: jika sheet sistem SECTION BEVERAGE dipilih, lokasi otomatis SECTION
+ * 3. Fallback Header Finder: menjamin kolom QTY SECTION dan QTY GUDANG tidak pernah tertukar
+ * 4. Legenda Keterangan Warna & Status Lengkap di akhir spreadsheet
  */
 
 /**
@@ -112,6 +113,69 @@ function stripTrailingDescriptors(str) {
 }
 
 /**
+ * Helper khusus deteksi Blackpaper Powder & Blackpaper Sauce
+ */
+function isBlackpaperPowder(str) {
+  if (!str) return false;
+  var s = String(str).toUpperCase();
+  return /BLACK\s*P[AE]P+ER/i.test(s) && /POWDER/i.test(s);
+}
+
+function isBlackpaperSauce(str) {
+  if (!str) return false;
+  var s = String(str).toUpperCase();
+  return /BLACK\s*P[AE]P+ER/i.test(s) && (/SAU[CS]E|SAUS/i.test(s) || !/POWDER/i.test(s));
+}
+
+function isAnyBlackpaper(str) {
+  if (!str) return false;
+  return /BLACK\s*P[AE]P+ER/i.test(String(str));
+}
+
+/**
+ * Konversi baris Blackpaper ke satuan GRAM berdasarkan keterangan kemasan/porsi
+ */
+function convertBlackpaperRowToGram(rawName, qty, satuanKemasan, satuanGram, satuanSistem) {
+  var sName = String(rawName || '').toUpperCase();
+  var numQty = parseNumberClean(qty);
+  if (numQty === 0) return 0;
+  
+  var allUnits = [satuanKemasan, satuanGram, satuanSistem].map(function(u) {
+    return String(u || '').toUpperCase().trim();
+  });
+  
+  // 1. Blackpaper Powder (@1000 GR/PACK)
+  if (/POWDER/i.test(sName)) {
+    var matchPowder = sName.match(/@\s*([0-9.,]+)/);
+    var factorPowder = matchPowder ? parseNumberClean(matchPowder[1]) : 1000;
+    if (factorPowder <= 1) factorPowder = 1000;
+    
+    // Jika satuan eksplisit GRAM dan angkanya mencerminkan gram (misal 500, 1000)
+    if (allUnits.some(function(u) { return u === 'GR' || u === 'GRAM' || u === 'G'; }) && numQty >= 100) {
+      return numQty;
+    }
+    // Jika satuan PACK / PCS atau nilai pack kecil -> kalikan faktor
+    return numQty * factorPowder;
+  }
+  
+  // 2. Blackpaper Sauce (@35 GRAM/PORSI)
+  if (/SAU[CS]E|SAUS/i.test(sName) || isAnyBlackpaper(sName)) {
+    var matchSauce = sName.match(/@\s*([0-9.,]+)/);
+    var factorSauce = matchSauce ? parseNumberClean(matchSauce[1]) : 35;
+    if (factorSauce <= 1) factorSauce = 35;
+    
+    // Jika satuan eksplisit GRAM dan nilai besar (> 500)
+    if (allUnits.some(function(u) { return u === 'GR' || u === 'GRAM' || u === 'G'; }) && numQty > 500) {
+      return numQty;
+    }
+    // Umumnya dicatat dalam porsi (misal: 20 porsi -> 20 * 35 = 700 gr)
+    return numQty * factorSauce;
+  }
+  
+  return numQty;
+}
+
+/**
  * Ekstraksi faktor konversi dari nama atau unit:
  * Mendukung format ribuan Indo: @1.000 GR/ PACK, @3970 GR/PAIL, @800GR/PACK, dll.
  */
@@ -138,7 +202,6 @@ function extractConversionInfo(strName, strUnitSys, unitKemasan, unitGram, unitS
     }
   }
   
-  // Standar Metrik KG <-> GR atau L <-> ML
   var allUnits = [strUnitSys, unitKemasan, unitGram, unitSistemAktual].map(function(u) {
     return String(u || '').toUpperCase().trim();
   });
@@ -226,8 +289,13 @@ function runStockComparison(params) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheetAktualName = params.sheetAktual;
   var sheetSistemName = params.sheetSistem;
-  var lokasi = params.lokasi || 'TOTAL';
   var enableConversion = params.enableConversion !== false;
+  
+  // Lokasi murni sesuai pilihan user di sidebar (GUDANG atau SECTION, bebas dan dinamis)
+  var lokasi = String(params.lokasi || 'GUDANG').trim().toUpperCase();
+  if (lokasi !== 'SECTION' && lokasi !== 'GUDANG') {
+    lokasi = 'GUDANG';
+  }
   
   var sheetAktual = ss.getSheetByName(sheetAktualName);
   var sheetSistem = ss.getSheetByName(sheetSistemName);
@@ -241,13 +309,24 @@ function runStockComparison(params) {
   if (!dataAktual || dataAktual.length === 0) throw new Error('Sheet Aktual kosong!');
   if (!dataSistem || dataSistem.length === 0) throw new Error('Sheet Sistem kosong!');
   
-  // 1. Pemetaan Header Sheet Aktual
+  // 1. Pemetaan Header Sheet Aktual (Lengkap dengan alias Section & Gudang)
   var mappingAktual = findHeaderMapping(dataAktual, {
     nama: ['NAMA', 'PRODUCT NAME', 'PRODUCTNAME', 'NAMA PRODUK', 'NAMA BARANG', 'ITEM', 'BARANG'],
-    qtyGudang: ['QTY GUDANG', 'QTYGUDANG', 'GUDANG'],
+    qtyGudang: ['QTY GUDANG', 'QTYGUDANG', 'GUDANG QTY', 'GUDANG', 'STOK GUDANG'],
     satuanKemasan: ['SATUAN BY KEMASAN', 'SATUANKEMASAN', 'SATUAN KEMASAN', 'KEMASAN'],
-    qtySection: ['QTY SECTION', 'QTYSECTION', 'SECTION'],
-    satuanGram: ['SATUAN BY GRAM/ML', 'SATUAN BY GRAM', 'SATUAN GRAM', 'GRAM/ML', 'SATUAN'],
+    qtySection: [
+      'QTY SECTION', 
+      'QTYSECTION', 
+      'SECTION QTY', 
+      'SECTIONQTY', 
+      'SECTION', 
+      'QTY BAR', 
+      'BAR', 
+      'QTY OUTLET', 
+      'OUTLET', 
+      'STOK SECTION'
+    ],
+    satuanGram: ['SATUAN BY GRAM/ML', 'SATUAN BY GRAM', 'SATUAN GRAM', 'GRAM/ML', 'SATUAN SECTION', 'SATUAN'],
     totalAll: ['TOTAL ALL', 'TOTALALL', 'TOTAL'],
     satuanSistem: ['SATUAN BY SISTEM', 'SATUAN SISTEM']
   });
@@ -255,8 +334,31 @@ function runStockComparison(params) {
   if (!mappingAktual || mappingAktual.mapping.nama === undefined) {
     throw new Error('Header kolom NAMA pada Sheet Aktual "' + sheetAktualName + '" tidak dapat dideteksi.');
   }
+
+  // Fallback Pemindaian Khusus: Pastikan QTY SECTION & QTY GUDANG tidak tertukar
+  var hRowAktual = dataAktual[mappingAktual.headerRowIndex];
+  if (mappingAktual.mapping.qtySection === undefined) {
+    for (var c = 0; c < hRowAktual.length; c++) {
+      var colStr = String(hRowAktual[c] || '').toUpperCase().trim();
+      if ((colStr.indexOf('SECTION') !== -1 || colStr.indexOf('BAR') !== -1) && 
+          colStr.indexOf('SATUAN') === -1 && 
+          c !== mappingAktual.mapping.qtyGudang) {
+        mappingAktual.mapping.qtySection = c;
+        break;
+      }
+    }
+  }
+  if (mappingAktual.mapping.qtyGudang === undefined) {
+    for (var c = 0; c < hRowAktual.length; c++) {
+      var colStr = String(hRowAktual[c] || '').toUpperCase().trim();
+      if (colStr.indexOf('GUDANG') !== -1 && colStr.indexOf('SATUAN') === -1) {
+        mappingAktual.mapping.qtyGudang = c;
+        break;
+      }
+    }
+  }
   
-  // 2. Pemetaan Header Sheet Sistem
+  // 2. Pemetaan Header Sheet Sistem (Exact Match Prioritas Tinggi)
   var mappingSistem = findHeaderMapping(dataSistem, {
     productName: ['PRODUCT NAME', 'PRODUCTNAME', 'NAMA PRODUK', 'NAMAPRODUK', 'NAMA BARANG', 'PRODUCT', 'NAMA', 'ITEM NAME', 'ITEM', 'BARANG'],
     productCode: ['PRODUCT CODE', 'PRODUCTCODE', 'KODE PRODUK', 'KODE'],
@@ -274,7 +376,8 @@ function runStockComparison(params) {
     throw new Error('Header kolom PRODUCT NAME pada Sheet Sistem "' + sheetSistemName + '" tidak dapat dideteksi.');
   }
   
-  // 3. Bangun Lookup Data Sistem secara Presisi
+  // 3. Bangun Lookup Data Sistem secara Presisi (Kandidat per Baris tanpa Menjumlahkan Data Berbeda)
+  var mapSistemByExactName = {};
   var mapSistemByBaseName = {};
   var mapSistemByCompact = {};
   var listSistemItems = [];
@@ -283,37 +386,44 @@ function runStockComparison(params) {
   var colSysCode = mappingSistem.mapping.productCode;
   var colSysCat = mappingSistem.mapping.category;
   var colSysUnit = mappingSistem.mapping.unit;
-  var colSysStock = mappingSistem.mapping.stockQty;
+  // Sesuai Instruksi User: Stok sistem diambil langsung dari kolom OPNAME QTY
+  var colSysStock = mappingSistem.mapping.opnameQty !== undefined ? mappingSistem.mapping.opnameQty : mappingSistem.mapping.stockQty;
   
   for (var i = mappingSistem.headerRowIndex + 1; i < dataSistem.length; i++) {
     var sRow = dataSistem[i];
     var rawSysName = sRow[colSysName];
     if (!rawSysName) continue;
     
+    var exactName = normalizeName(rawSysName);
     var baseName = cleanProductBaseName(rawSysName);
     var compactName = toCompactAlphanumeric(baseName);
     var rowStock = colSysStock !== undefined ? parseNumberClean(sRow[colSysStock]) : 0;
     
-    if (mapSistemByBaseName[baseName]) {
-      mapSistemByBaseName[baseName].stockQty += rowStock;
-      if (mapSistemByCompact[compactName]) {
-        mapSistemByCompact[compactName].stockQty += rowStock;
-      }
-    } else {
-      var itemObj = {
-        productName: String(rawSysName).trim(),
-        baseName: baseName,
-        compactName: compactName,
-        productCode: colSysCode !== undefined ? String(sRow[colSysCode] || '') : '',
-        category: colSysCat !== undefined ? String(sRow[colSysCat] || '') : '',
-        unit: colSysUnit !== undefined ? String(sRow[colSysUnit] || '').trim() : '',
-        stockQty: rowStock,
-        rowIndex: i + 1
-      };
-      
-      listSistemItems.push(itemObj);
-      if (baseName) mapSistemByBaseName[baseName] = itemObj;
-      if (compactName) mapSistemByCompact[compactName] = itemObj;
+    var itemObj = {
+      productName: String(rawSysName).trim(),
+      exactName: exactName,
+      baseName: baseName,
+      compactName: compactName,
+      productCode: colSysCode !== undefined ? String(sRow[colSysCode] || '') : '',
+      category: colSysCat !== undefined ? String(sRow[colSysCat] || '') : '',
+      unit: colSysUnit !== undefined ? String(sRow[colSysUnit] || '').trim() : '',
+      stockQty: rowStock,
+      rowIndex: i + 1
+    };
+    
+    listSistemItems.push(itemObj);
+    
+    if (exactName) {
+      if (!mapSistemByExactName[exactName]) mapSistemByExactName[exactName] = [];
+      mapSistemByExactName[exactName].push(itemObj);
+    }
+    if (baseName) {
+      if (!mapSistemByBaseName[baseName]) mapSistemByBaseName[baseName] = [];
+      mapSistemByBaseName[baseName].push(itemObj);
+    }
+    if (compactName) {
+      if (!mapSistemByCompact[compactName]) mapSistemByCompact[compactName] = [];
+      mapSistemByCompact[compactName].push(itemObj);
     }
   }
   
@@ -323,12 +433,86 @@ function runStockComparison(params) {
     totalAktual: 0,
     matchDirectCount: 0,
     matchConvertedCount: 0,
+    convertedSysZeroCount: 0,
     matchCount: 0,
     selisihCount: 0,
+    tidakAdaDiSistemCount: 0,
+    kosongCount: 0,
     notFoundCount: 0
   };
   
   var mA = mappingAktual.mapping;
+
+  // 4a. Pre-pass Special Case: BLACKPAPER (Powder @1000 GR/PACK + Sauce @35 GRAM/PORSI -> Total Gram vs Sistem)
+  var blackpaperPowderInfo = null;
+  var blackpaperSauceInfo = null;
+  
+  for (var p = mappingAktual.headerRowIndex + 1; p < dataAktual.length; p++) {
+    var pRow = dataAktual[p];
+    var pName = pRow[mA.nama];
+    if (!pName) continue;
+    
+    var pQtyGudang = (mA.qtyGudang !== undefined && pRow[mA.qtyGudang] !== undefined) ? parseNumberClean(pRow[mA.qtyGudang]) : 0;
+    var pSatKemasan = (mA.satuanKemasan !== undefined && pRow[mA.satuanKemasan] !== undefined) ? String(pRow[mA.satuanKemasan] || '').trim() : '';
+    var pQtySection = (mA.qtySection !== undefined && pRow[mA.qtySection] !== undefined) ? parseNumberClean(pRow[mA.qtySection]) : 0;
+    var pSatGram = (mA.satuanGram !== undefined && pRow[mA.satuanGram] !== undefined) ? String(pRow[mA.satuanGram] || '').trim() : '';
+    var pSatSistem = (mA.satuanSistem !== undefined && pRow[mA.satuanSistem] !== undefined) ? String(pRow[mA.satuanSistem] || '').trim() : '';
+    
+    var pQtyTerpilih = (lokasi === 'SECTION') ? pQtySection : pQtyGudang;
+    var pSatTerpilih = (lokasi === 'SECTION') ? (pSatGram || pSatSistem || 'GRAM') : (pSatKemasan || pSatSistem || 'PACK');
+    
+    if (isBlackpaperPowder(pName)) {
+      var gPowder = convertBlackpaperRowToGram(pName, pQtyTerpilih, pSatKemasan, pSatGram, pSatSistem);
+      blackpaperPowderInfo = {
+        rowIndex: p,
+        rawName: pName,
+        qtyTerpilih: pQtyTerpilih,
+        satuanTerpilih: pSatTerpilih,
+        grams: gPowder
+      };
+    } else if (isBlackpaperSauce(pName)) {
+      var gSauce = convertBlackpaperRowToGram(pName, pQtyTerpilih, pSatKemasan, pSatGram, pSatSistem);
+      blackpaperSauceInfo = {
+        rowIndex: p,
+        rawName: pName,
+        qtyTerpilih: pQtyTerpilih,
+        satuanTerpilih: pSatTerpilih,
+        grams: gSauce
+      };
+    }
+  }
+
+  var sysBlackpaperItem = null;
+  for (var sIdx = 0; sIdx < listSistemItems.length; sIdx++) {
+    var it = listSistemItems[sIdx];
+    if (isBlackpaperSauce(it.productName) || isBlackpaperSauce(it.baseName) || isAnyBlackpaper(it.productName)) {
+      sysBlackpaperItem = it;
+      break;
+    }
+  }
+
+  var totalBlackpaperGrams = (blackpaperPowderInfo ? blackpaperPowderInfo.grams : 0) + 
+                             (blackpaperSauceInfo ? blackpaperSauceInfo.grams : 0);
+  
+  var sysBlackpaperGram = 0;
+  if (sysBlackpaperItem) {
+    var sU = (sysBlackpaperItem.unit || '').toUpperCase().trim();
+    if (sU === 'GR' || sU === 'GRAM' || sU === 'G') {
+      sysBlackpaperGram = sysBlackpaperItem.stockQty;
+    } else if (sU === 'PORSI') {
+      sysBlackpaperGram = sysBlackpaperItem.stockQty * 35;
+    } else if (sU === 'KG' || sU === 'KILOGRAM' || sU === 'PACK') {
+      sysBlackpaperGram = sysBlackpaperItem.stockQty * 1000;
+    } else {
+      if (Math.abs(sysBlackpaperItem.stockQty * 35 - totalBlackpaperGrams) < 0.1) {
+        sysBlackpaperGram = sysBlackpaperItem.stockQty * 35;
+      } else {
+        sysBlackpaperGram = sysBlackpaperItem.stockQty;
+      }
+    }
+  }
+  var diffBlackpaperGram = Math.round((totalBlackpaperGrams - sysBlackpaperGram) * 100) / 100;
+
   for (var j = mappingAktual.headerRowIndex + 1; j < dataAktual.length; j++) {
     var aRow = dataAktual[j];
     var rawAktualName = aRow[mA.nama];
@@ -337,41 +521,193 @@ function runStockComparison(params) {
     var baseAktual = cleanProductBaseName(rawAktualName);
     var compactAktual = toCompactAlphanumeric(baseAktual);
     
-    var qtyGudang = mA.qtyGudang !== undefined ? parseNumberClean(aRow[mA.qtyGudang]) : 0;
-    var satuanKemasan = mA.satuanKemasan !== undefined ? String(aRow[mA.satuanKemasan] || '').trim() : '';
-    var qtySection = mA.qtySection !== undefined ? parseNumberClean(aRow[mA.qtySection]) : 0;
-    var satuanGram = mA.satuanGram !== undefined ? String(aRow[mA.satuanGram] || '').trim() : '';
-    var totalAll = mA.totalAll !== undefined ? parseNumberClean(aRow[mA.totalAll]) : 0;
-    var satuanSistem = mA.satuanSistem !== undefined ? String(aRow[mA.satuanSistem] || '').trim() : '';
+    // Nilai terpisah kolom Gudang vs Section
+    var qtyGudang = (mA.qtyGudang !== undefined && aRow[mA.qtyGudang] !== undefined) ? parseNumberClean(aRow[mA.qtyGudang]) : 0;
+    var satuanKemasan = (mA.satuanKemasan !== undefined && aRow[mA.satuanKemasan] !== undefined) ? String(aRow[mA.satuanKemasan] || '').trim() : '';
     
+    var qtySection = (mA.qtySection !== undefined && aRow[mA.qtySection] !== undefined) ? parseNumberClean(aRow[mA.qtySection]) : 0;
+    var satuanGram = (mA.satuanGram !== undefined && aRow[mA.satuanGram] !== undefined) ? String(aRow[mA.satuanGram] || '').trim() : '';
+    
+    var totalAll = (mA.totalAll !== undefined && aRow[mA.totalAll] !== undefined) ? parseNumberClean(aRow[mA.totalAll]) : 0;
+    var satuanSistem = (mA.satuanSistem !== undefined && aRow[mA.satuanSistem] !== undefined) ? String(aRow[mA.satuanSistem] || '').trim() : '';
+    
+    // PEMILIHAN NILAI AKTUAL SECARA KETAT SESUAI LOKASI (HANYA GUDANG ATAU SECTION):
     var qtyAktualTerpilih = 0;
     var satuanAktualTerpilih = '';
     
-    if (lokasi === 'GUDANG') {
-      qtyAktualTerpilih = qtyGudang;
-      satuanAktualTerpilih = satuanKemasan || satuanSistem;
-    } else if (lokasi === 'SECTION') {
+    if (lokasi === 'SECTION') {
+      // HANYA BACA QTY SECTION!
       qtyAktualTerpilih = qtySection;
-      satuanAktualTerpilih = satuanGram || satuanSistem;
+      satuanAktualTerpilih = satuanGram || satuanSistem || 'GRAM';
     } else {
-      if (totalAll === 0 && (qtyGudang > 0 || qtySection > 0)) {
-        totalAll = qtyGudang + qtySection;
-      }
-      qtyAktualTerpilih = totalAll;
-      satuanAktualTerpilih = satuanSistem || satuanKemasan || satuanGram;
+      // HANYA BACA QTY GUDANG!
+      qtyAktualTerpilih = qtyGudang;
+      satuanAktualTerpilih = satuanKemasan || satuanSistem || 'PACK';
     }
     
-    // Pencocokan Nama Presisi
-    var sysMatch = mapSistemByBaseName[baseAktual] || mapSistemByCompact[compactAktual] || null;
+    // Special Case: BLACKPAPER POWDER
+    if (isBlackpaperPowder(rawAktualName)) {
+      var bpPowderGram = blackpaperPowderInfo ? blackpaperPowderInfo.grams : 0;
+      var itemResult = {
+        namaAktual: String(rawAktualName).trim(),
+        lokasiTerpilih: lokasi,
+        qtyGudang: qtyGudang,
+        satuanKemasan: satuanKemasan,
+        qtySection: qtySection,
+        satuanGram: satuanGram,
+        totalAktual: totalAll,
+        qtyAktual: qtyAktualTerpilih,
+        satuanAktual: satuanAktualTerpilih,
+        
+        foundInSystem: true,
+        namaSistem: sysBlackpaperItem ? sysBlackpaperItem.productName : 'BLACKPAPER SAUCE (GABUNGAN)',
+        productCode: sysBlackpaperItem ? sysBlackpaperItem.productCode : '-',
+        category: sysBlackpaperItem ? sysBlackpaperItem.category : '-',
+        qtySistem: '-',
+        satuanSistem: 'GRAM',
+        faktorKonversi: '@1000 GR/PACK',
+        selisih: 0,
+        status: 'MATCH_CONVERTED',
+        keteranganKonversi: 'Dikonversi: ' + qtyAktualTerpilih + ' ' + (satuanAktualTerpilih || 'PACK') + ' = ' + bpPowderGram + ' GR (@1000 GR/PACK) & disummary ke BLACKPAPER SAUCE'
+      };
+      
+      summary.matchConvertedCount++;
+      summary.matchCount++;
+      summary.totalAktual++;
+      items.push(itemResult);
+      continue;
+    }
+
+    // Special Case: BLACKPAPER SAUCE
+    if (isBlackpaperSauce(rawAktualName)) {
+      var bpPowderGram = blackpaperPowderInfo ? blackpaperPowderInfo.grams : 0;
+      var bpSauceGram = blackpaperSauceInfo ? blackpaperSauceInfo.grams : 0;
+      var isBpMatch = Math.abs(diffBlackpaperGram) < 0.01;
+      
+      var bpStatus = 'MATCH_CONVERTED';
+      var bpSelisih = 0;
+      var bpKet = '';
+      
+      if (!sysBlackpaperItem) {
+        if (totalBlackpaperGrams > 0) {
+          bpStatus = 'TIDAK_ADA_DI_SISTEM';
+          bpSelisih = totalBlackpaperGrams;
+          bpKet = 'Total fisik ' + totalBlackpaperGrams + ' GR, namun Blackpaper Sauce tidak ditemukan di sistem';
+          summary.tidakAdaDiSistemCount++;
+          summary.notFoundCount++;
+        } else {
+          bpStatus = 'BELUM_TERCATAT';
+          bpSelisih = 0;
+          bpKet = 'Fisik kosong dan Blackpaper Sauce tidak ditemukan di sistem';
+          summary.kosongCount++;
+        }
+      } else if (isBpMatch) {
+        bpStatus = 'MATCH_CONVERTED';
+        bpSelisih = 0;
+        bpKet = 'Summary Fisik: Powder (' + bpPowderGram + ' gr) + Sauce (' + bpSauceGram + ' gr) = ' + totalBlackpaperGrams + ' GR (Sesuai dengan sistem: ' + sysBlackpaperItem.stockQty + ' ' + sysBlackpaperItem.unit + ')';
+        summary.matchConvertedCount++;
+        summary.matchCount++;
+      } else {
+        bpSelisih = diffBlackpaperGram;
+        bpStatus = diffBlackpaperGram < 0 ? 'SELISIH_KURANG' : 'SELISIH_LEBIH';
+        bpKet = 'Summary Fisik: Powder (' + bpPowderGram + ' gr) + Sauce (' + bpSauceGram + ' gr) = ' + totalBlackpaperGrams + ' GR vs Sistem: ' + sysBlackpaperItem.stockQty + ' ' + sysBlackpaperItem.unit + ' (' + sysBlackpaperGram + ' gr) → Selisih: ' + (diffBlackpaperGram > 0 ? '+' : '') + diffBlackpaperGram + ' GR';
+        summary.selisihCount++;
+      }
+      
+      var itemResult = {
+        namaAktual: String(rawAktualName).trim(),
+        lokasiTerpilih: lokasi,
+        qtyGudang: qtyGudang,
+        satuanKemasan: satuanKemasan,
+        qtySection: qtySection,
+        satuanGram: satuanGram,
+        totalAktual: totalAll,
+        qtyAktual: qtyAktualTerpilih,
+        satuanAktual: satuanAktualTerpilih,
+        
+        foundInSystem: !!sysBlackpaperItem,
+        namaSistem: sysBlackpaperItem ? sysBlackpaperItem.productName : '-',
+        productCode: sysBlackpaperItem ? sysBlackpaperItem.productCode : '-',
+        category: sysBlackpaperItem ? sysBlackpaperItem.category : '-',
+        qtySistem: sysBlackpaperItem ? sysBlackpaperItem.stockQty : 0,
+        satuanSistem: sysBlackpaperItem ? sysBlackpaperItem.unit : 'GRAM',
+        faktorKonversi: '@35 GR/PORSI',
+        selisih: bpSelisih,
+        status: bpStatus,
+        keteranganKonversi: bpKet
+      };
+      
+      summary.totalAktual++;
+      items.push(itemResult);
+      continue;
+    }
     
-    if (!sysMatch) {
+    // Kumpulkan kandidat sistem yang cocok namanya
+    var exactAktual = normalizeName(rawAktualName);
+    var candidates = [];
+    
+    if (mapSistemByExactName[exactAktual] && mapSistemByExactName[exactAktual].length > 0) {
+      candidates = mapSistemByExactName[exactAktual];
+    } else if (mapSistemByBaseName[baseAktual] && mapSistemByBaseName[baseAktual].length > 0) {
+      candidates = mapSistemByBaseName[baseAktual];
+    } else if (mapSistemByCompact[compactAktual] && mapSistemByCompact[compactAktual].length > 0) {
+      candidates = mapSistemByCompact[compactAktual];
+    } else {
       var strippedAktual = stripTrailingDescriptors(baseAktual);
       if (strippedAktual && strippedAktual !== baseAktual) {
-        sysMatch = mapSistemByBaseName[strippedAktual] || mapSistemByCompact[toCompactAlphanumeric(strippedAktual)] || null;
+        if (mapSistemByBaseName[strippedAktual] && mapSistemByBaseName[strippedAktual].length > 0) {
+          candidates = mapSistemByBaseName[strippedAktual];
+        } else if (mapSistemByCompact[toCompactAlphanumeric(strippedAktual)]) {
+          candidates = mapSistemByCompact[toCompactAlphanumeric(strippedAktual)];
+        }
+      }
+    }
+
+    var sysMatch = null;
+    if (candidates && candidates.length > 0) {
+      // ATURAN UTAMA: PRIORITASKAN KESAMAAN VALUE TERLEBIH DAHULU!
+      // 1. Jika ada kandidat yang nilainya sama persis dengan qtyAktual (misal 80 == 80), LANGSUNG PILIH!
+      for (var k = 0; k < candidates.length; k++) {
+        if (Math.abs(candidates[k].stockQty - qtyAktualTerpilih) < 0.001) {
+          sysMatch = candidates[k];
+          break;
+        }
+      }
+      
+      // 2. Jika belum cocok, cek apakah ada kandidat yang pas via konversi (@...)
+      if (!sysMatch && enableConversion) {
+        var tempConv = extractConversionInfo(rawAktualName, '', satuanKemasan, satuanGram, satuanSistem);
+        if (tempConv && tempConv.factor > 1) {
+          var tf = tempConv.factor;
+          for (var k = 0; k < candidates.length; k++) {
+            var candQty = candidates[k].stockQty;
+            if (candQty > 0 && qtyAktualTerpilih > 0) {
+              if (Math.abs(qtyAktualTerpilih / tf - candQty) < 0.01 || Math.abs(qtyAktualTerpilih * tf - candQty) < 0.01) {
+                sysMatch = candidates[k];
+                break;
+              }
+            }
+          }
+        }
+      }
+      
+      // 3. Jika belum cocok, cocokkan berdasarkan kesamaan Satuan / UoM
+      if (!sysMatch && satuanAktualTerpilih) {
+        var uAktual = satuanAktualTerpilih.toUpperCase().trim();
+        for (var k = 0; k < candidates.length; k++) {
+          if (candidates[k].unit && candidates[k].unit.toUpperCase().trim() === uAktual) {
+            sysMatch = candidates[k];
+            break;
+          }
+        }
+      }
+      
+      // 4. Fallback: gunakan kandidat pertama
+      if (!sysMatch) {
+        sysMatch = candidates[0];
       }
     }
     
-    // Ekstraksi info faktor konversi (@...)
     var convInfo = null;
     if (enableConversion) {
       convInfo = extractConversionInfo(
@@ -399,8 +735,7 @@ function runStockComparison(params) {
       namaSistem: sysMatch ? sysMatch.productName : '-',
       productCode: sysMatch ? sysMatch.productCode : '-',
       category: sysMatch ? sysMatch.category : '-',
-      rawQtySistem: sysMatch ? sysMatch.stockQty : 0,
-      qtySistem: sysMatch ? sysMatch.stockQty : 0, // Nilai sistem yang disetarakan
+      qtySistem: sysMatch ? sysMatch.stockQty : 0,
       satuanSistem: sysMatch ? sysMatch.unit : (satuanSistem || '-'),
       
       // Konversi Info
@@ -409,7 +744,7 @@ function runStockComparison(params) {
       
       // Hasil Komparasi
       selisih: 0,
-      status: 'TIDAK_DITEMUKAN'
+      status: 'BELUM_TERCATAT'
     };
     
     if (sysMatch) {
@@ -417,34 +752,41 @@ function runStockComparison(params) {
       var aQty = qtyAktualTerpilih;
       var diffDirect = Math.round((aQty - sQty) * 100) / 100;
       
-      // 1. Cek Kesesuaian Langsung (1 : 1)
+      // 1. Cocok Langsung (1 : 1)
       if (Math.abs(diffDirect) < 0.001) {
-        itemResult.status = 'MATCH';
-        itemResult.selisih = 0;
-        itemResult.qtySistem = sQty;
-        itemResult.keteranganKonversi = 'Sesuai langsung (1 : 1)';
-        summary.matchDirectCount++;
-        summary.matchCount++;
+        if (aQty === 0 && sQty === 0) {
+          itemResult.status = 'BELUM_TERCATAT';
+          itemResult.selisih = 0;
+          itemResult.qtySistem = sQty;
+          itemResult.keteranganKonversi = 'Kedua stok bernilai 0 / kosong (nihil)';
+          summary.kosongCount++;
+        } else {
+          itemResult.status = 'MATCH';
+          itemResult.selisih = 0;
+          itemResult.qtySistem = sQty;
+          itemResult.keteranganKonversi = 'Sesuai langsung (1 : 1)';
+          summary.matchDirectCount++;
+          summary.matchCount++;
+        }
       } 
       // 2. Logika Pembagian Jomplang Cerdas (@3970, @1000, dll)
       else if (convInfo && convInfo.factor > 1) {
         var f = convInfo.factor;
         var matchedByConv = false;
         
-        // Kasus 2a: Nilai Aktual besar (misal 11910 GR atau 2000 GR), Sistem nilai kecil (misal 3 Pail atau 2 Pack)
+        // Kasus 2a: Nilai Aktual besar, Sistem nilai kecil (misal 11910 GR vs 3 Pail)
         if (aQty > 0 && sQty > 0 && aQty > sQty) {
           var hasilBagi = Math.round((aQty / f) * 1000) / 1000;
-          // Periksa apakah pembagian dengan faktor persis menghasilkan stok sistem
           if (Math.abs(hasilBagi - sQty) < 0.01) {
             itemResult.status = 'MATCH_CONVERTED';
-            itemResult.qtySistem = sQty; // Tampilkan nilai sistem yang cocok
+            itemResult.qtySistem = sQty;
             itemResult.selisih = 0;
             itemResult.keteranganKonversi = 'Sesuai: ' + aQty + ' ÷ ' + f + ' = ' + sQty + ' ' + (convInfo.subUnit || itemResult.satuanSistem);
             matchedByConv = true;
           }
         }
         
-        // Kasus 2b: Nilai Aktual kecil (misal 2 Pack), Sistem nilai besar (misal 2000 GR)
+        // Kasus 2b: Nilai Aktual kecil (2 Pack), Sistem nilai besar (2000 GR)
         if (!matchedByConv && aQty > 0 && sQty > 0 && sQty > aQty) {
           var hasilKali = Math.round((aQty * f) * 1000) / 1000;
           if (Math.abs(hasilKali - sQty) < 0.01) {
@@ -456,23 +798,25 @@ function runStockComparison(params) {
           }
         }
         
-        // Kasus 2c: Khusus Lokasi TOTAL
-        if (!matchedByConv && lokasi === 'TOTAL' && (qtyGudang > 0 || qtySection > 0)) {
-          var totalPack = Math.round((qtyGudang + (qtySection / f)) * 1000) / 1000;
-          if (Math.abs(totalPack - sQty) < 0.01) {
-            itemResult.status = 'MATCH_CONVERTED';
+        // KASUS 2d: Hasil bagi pas bulat tapi di sistem 0 -> Hijau Mint
+        if (!matchedByConv && aQty > 0 && sQty === 0) {
+          var hasilBagiPas = Math.round((aQty / f) * 1000) / 1000;
+          if (Math.abs(hasilBagiPas - Math.round(hasilBagiPas)) < 0.001 && hasilBagiPas > 0) {
+            var jmlPail = Math.round(hasilBagiPas);
+            itemResult.status = 'CONVERTED_SYS_ZERO';
             itemResult.qtySistem = sQty;
-            itemResult.selisih = 0;
-            itemResult.keteranganKonversi = 'Sesuai: ' + qtyGudang + ' Pack + (' + qtySection + ' / ' + f + ') = ' + totalPack + ' ' + itemResult.satuanSistem;
+            itemResult.selisih = jmlPail;
+            itemResult.keteranganKonversi = 'Fisik ' + aQty + ' ' + (satuanAktualTerpilih || 'GR') + ' pas terbagi ' + f + ' = ' + jmlPail + ' ' + (convInfo.subUnit || 'Pail/Kemasan') + ' (Sistem masih 0)';
             matchedByConv = true;
+            summary.convertedSysZeroCount++;
+            summary.matchCount++;
           }
         }
         
-        if (matchedByConv) {
+        if (matchedByConv && itemResult.status === 'MATCH_CONVERTED') {
           summary.matchConvertedCount++;
           summary.matchCount++;
-        } else {
-          // Pembagian tidak ketemu nilai yang pas (Contoh kasus: 11971 / 3 tidak pas 3970)
+        } else if (!matchedByConv) {
           var sysLooksLikeKemasan = /PACK|BTL|BOTOL|PAIL|DOS|KARTON/i.test(itemResult.satuanSistem) || (sQty <= 100 && aQty > 200);
           var aDisetarakan = sysLooksLikeKemasan ? (aQty / f) : aQty;
           var diff = Math.round((aDisetarakan - sQty) * 100) / 100;
@@ -480,7 +824,11 @@ function runStockComparison(params) {
           itemResult.qtySistem = sQty;
           itemResult.selisih = diff;
           itemResult.status = diff < 0 ? 'SELISIH_KURANG' : 'SELISIH_LEBIH';
-          itemResult.keteranganKonversi = 'Tidak sesuai (@' + convInfo.label + ': ' + aQty + ' ÷ ' + f + ' = ' + (Math.round(aDisetarakan * 100) / 100) + ' ≠ ' + sQty + ')';
+          if (sysLooksLikeKemasan) {
+            itemResult.keteranganKonversi = 'Tidak sesuai (' + convInfo.label + ': ' + aQty + ' ÷ ' + f + ' = ' + (Math.round(aDisetarakan * 100) / 100) + ' ≠ ' + sQty + ')';
+          } else {
+            itemResult.keteranganKonversi = 'Tidak sesuai (Aktual: ' + aQty + ' ' + (itemResult.satuanAktual || '') + ' vs Sistem: ' + sQty + ' ' + (itemResult.satuanSistem || '') + ')';
+          }
           summary.selisihCount++;
         }
       } 
@@ -494,9 +842,23 @@ function runStockComparison(params) {
       }
     } else {
       itemResult.qtySistem = '-';
-      itemResult.status = 'TIDAK_DITEMUKAN';
-      itemResult.keteranganKonversi = 'Produk tidak ditemukan di sheet sistem';
-      summary.notFoundCount++;
+      itemResult.foundInSystem = false;
+      
+      // ATURAN WARNA:
+      // OREN: Khusus jika ada nilai di aktual (qtyAktualTerpilih > 0), namun TIDAK ADA di sistem!
+      // ABU-ABU: Jika keduanya nilainya kosong, null, atau tidak ada ditemukan!
+      if (qtyAktualTerpilih > 0) {
+        itemResult.selisih = qtyAktualTerpilih;
+        itemResult.status = 'TIDAK_ADA_DI_SISTEM';
+        itemResult.keteranganKonversi = 'Ada di aktual (' + qtyAktualTerpilih + ' ' + (satuanAktualTerpilih || '') + '), namun tidak ada di sheet sistem';
+        summary.tidakAdaDiSistemCount++;
+        summary.notFoundCount++;
+      } else {
+        itemResult.selisih = 0;
+        itemResult.status = 'BELUM_TERCATAT';
+        itemResult.keteranganKonversi = 'Keduanya bernilai kosong / 0 / tidak ditemukan';
+        summary.kosongCount++;
+      }
     }
     
     summary.totalAktual++;
@@ -519,11 +881,12 @@ function runStockComparison(params) {
 /**
  * Mencetak Hasil Perbandingan langsung ke Sheet Baru:
  * Header bersih: QTY AKTUAL, FAKTOR KONVERSI, QTY SISTEM, SELISIH, STATUS, KETERANGAN
+ * Di bagian akhir sheet disertakan LEGENDA KETERANGAN WARNA lengkap
  */
 function cetakHasilKeSpreadsheet(params) {
   var comparison = runStockComparison(params);
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var lokasi = params.lokasi || 'TOTAL';
+  var lokasi = comparison.meta.lokasi; // Mengambil lokasi yang sudah teruji presisi
   
   var targetSheetName = 'HASIL_COMPARE_' + lokasi.toUpperCase();
   var outSheet = ss.getSheetByName(targetSheetName);
@@ -543,12 +906,12 @@ function cetakHasilKeSpreadsheet(params) {
   
   // 2. Summary Card di Row 4
   outSheet.getRange('A4:B4').merge().setValue('Total Produk Lapangan: ' + comparison.summary.totalAktual).setFontWeight('bold');
-  outSheet.getRange('C4:D4').merge().setValue('Cocok Langsung: ' + comparison.summary.matchDirectCount).setFontColor('#137333').setFontWeight('bold');
-  outSheet.getRange('E4:F4').merge().setValue('Cocok via Konversi: ' + comparison.summary.matchConvertedCount).setFontColor('#00695c').setFontWeight('bold');
-  outSheet.getRange('G4:H4').merge().setValue('Selisih: ' + comparison.summary.selisihCount).setFontColor('#c5221f').setFontWeight('bold');
-  outSheet.getRange('I4:J4').merge().setValue('Tidak di Sistem: ' + comparison.summary.notFoundCount).setFontColor('#5f6368').setFontWeight('bold');
+  outSheet.getRange('C4:D4').merge().setValue('Cocok / Sesuai: ' + comparison.summary.matchCount).setFontColor('#137333').setFontWeight('bold');
+  outSheet.getRange('E4:F4').merge().setValue('Ada Selisih: ' + comparison.summary.selisihCount).setFontColor('#c5221f').setFontWeight('bold');
+  outSheet.getRange('G4:H4').merge().setValue('Tidak Ada di Sistem: ' + comparison.summary.tidakAdaDiSistemCount).setFontColor('#c75b12').setFontWeight('bold');
+  outSheet.getRange('I4:J4').merge().setValue('Kosong / Nihil: ' + comparison.summary.kosongCount).setFontColor('#5f6368').setFontWeight('bold');
   
-  // 3. Header Kolom Simpel Bersih (QTY AKTUAL & QTY SISTEM Tunggal)
+  // 3. Header Kolom Simpel Bersih
   var headers = [
     'NO',
     'NAMA PRODUK (AKTUAL)',
@@ -564,11 +927,6 @@ function cetakHasilKeSpreadsheet(params) {
     'KETERANGAN / LOGIKA KONVERSI'
   ];
   
-  if (lokasi === 'TOTAL') {
-    headers.push('QTY GUDANG');
-    headers.push('QTY SECTION');
-  }
-  
   var headerRow = 6;
   var headerRange = outSheet.getRange(headerRow, 1, 1, headers.length);
   headerRange.setValues([headers]);
@@ -577,7 +935,7 @@ function cetakHasilKeSpreadsheet(params) {
   headerRange.setFontWeight('bold');
   headerRange.setHorizontalAlignment('center');
   
-  // 4. Data Rows & Warna
+  // 4. Data Rows & Pewarnaan Cerdas
   var rows = [];
   var bgColors = [];
   var fontColors = [];
@@ -597,6 +955,10 @@ function cetakHasilKeSpreadsheet(params) {
       statusText = 'SESUAI (KONVERSI)';
       rowBg = '#e0f2f1';
       textCol = '#00695c';
+    } else if (item.status === 'CONVERTED_SYS_ZERO') {
+      statusText = 'PAS KONVERSI (+ ' + item.selisih + ')';
+      rowBg = '#d1e7dd';
+      textCol = '#0f5132';
     } else if (item.status === 'SELISIH_KURANG') {
       statusText = 'KURANG (' + item.selisih + ')';
       rowBg = '#fce8e6';
@@ -605,8 +967,12 @@ function cetakHasilKeSpreadsheet(params) {
       statusText = 'LEBIH (+' + item.selisih + ')';
       rowBg = '#fef7e0';
       textCol = '#b06000';
+    } else if (item.status === 'TIDAK_ADA_DI_SISTEM') {
+      statusText = 'TIDAK ADA DI SISTEM';
+      rowBg = '#ffe8d6'; // Warna Orange Lembut
+      textCol = '#c75b12'; // Warna Teks Orange Tegas
     } else {
-      statusText = 'TIDAK DI SISTEM';
+      statusText = 'TIDAK TERCATAT (0 / -)';
       rowBg = '#f1f3f4';
       textCol = '#5f6368';
     }
@@ -626,22 +992,32 @@ function cetakHasilKeSpreadsheet(params) {
       item.keteranganKonversi
     ];
     
-    if (lokasi === 'TOTAL') {
-      rowValues.push(item.qtyGudang);
-      rowValues.push(item.qtySection);
-    }
-    
     rows.push(rowValues);
     
     var rowBgArr = [];
     var rowFontArr = [];
     for (var c = 0; c < headers.length; c++) {
-      if (c === 9 || c === 10) { // Kolom SELISIH & STATUS
+      if (c === 9 || c === 10) {
         rowBgArr.push(rowBg);
         rowFontArr.push(textCol);
-      } else if (c === 6 || c === 7) { // FAKTOR KONVERSI & QTY SISTEM
-        rowBgArr.push(item.status === 'MATCH_CONVERTED' ? '#e0f2f1' : (idx % 2 === 0 ? '#ffffff' : '#f9fbfd'));
-        rowFontArr.push(item.status === 'MATCH_CONVERTED' ? '#00695c' : '#333333');
+      } else if (c === 6 || c === 7) {
+        if (item.status === 'MATCH_CONVERTED') {
+          rowBgArr.push('#e0f2f1');
+          rowFontArr.push('#00695c');
+        } else if (item.status === 'CONVERTED_SYS_ZERO') {
+          rowBgArr.push('#d1e7dd');
+          rowFontArr.push('#0f5132');
+        } else if (item.status === 'TIDAK_ADA_DI_SISTEM') {
+          rowBgArr.push('#fff4eb');
+          rowFontArr.push('#c75b12');
+        } else {
+          rowBgArr.push(idx % 2 === 0 ? '#ffffff' : '#f9fbfd');
+          rowFontArr.push('#333333');
+        }
+      } else if (c === 1 && item.status === 'TIDAK_ADA_DI_SISTEM') {
+        // Sorotan nama produk yang tidak ada di sistem
+        rowBgArr.push('#fff4eb');
+        rowFontArr.push('#c75b12');
       } else {
         rowBgArr.push(idx % 2 === 0 ? '#ffffff' : '#f9fbfd');
         rowFontArr.push('#333333');
@@ -666,6 +1042,32 @@ function cetakHasilKeSpreadsheet(params) {
     outSheet.getRange(headerRow + 1, 9, rows.length, 1).setHorizontalAlignment('center');
     outSheet.getRange(headerRow + 1, 10, rows.length, 1).setHorizontalAlignment('right').setFontWeight('bold');
     outSheet.getRange(headerRow + 1, 11, rows.length, 1).setHorizontalAlignment('center').setFontWeight('bold');
+  }
+  
+  // 5. LEGENDA / KETERANGAN WARNA DI AKHIR SPREADSHEET
+  var legendStartRow = headerRow + rows.length + 3;
+  outSheet.getRange(legendStartRow, 1).setValue('KETERANGAN WARNA & STATUS:').setFontWeight('bold').setFontSize(11).setFontColor('#202124');
+  
+  var legendItems = [
+    { label: 'SESUAI (0)', bg: '#e6f4ea', text: '#137333', desc: 'Stok fisik lapangan dan stok sistem cocok sempurna (1 : 1).' },
+    { label: 'SESUAI (KONVERSI)', bg: '#e0f2f1', text: '#00695c', desc: 'Stok cocok setelah konversi satuan (@1000 GR, @35 PCS/PACK, dsb).' },
+    { label: 'PAS KONVERSI (+N)', bg: '#d1e7dd', text: '#0f5132', desc: 'Fisik pas terkonversi utuh (misal: 11910 GR ÷ 3970 = 3 Pail), di sistem masih 0 / belum terisi.' },
+    { label: 'LEBIH (+)', bg: '#fef7e0', text: '#b06000', desc: 'Stok fisik lapangan lebih banyak daripada sistem (ada selisih lebih).' },
+    { label: 'KURANG (-)', bg: '#fce8e6', text: '#c5221f', desc: 'Stok fisik lapangan lebih sedikit daripada sistem (ada selisih kurang).' },
+    { label: 'TIDAK ADA DI SISTEM', bg: '#ffe8d6', text: '#c75b12', desc: 'Stok fisik ADA di aktual (> 0), namun TIDAK DITEMUKAN di sheet sistem.' },
+    { label: 'TIDAK TERCATAT (0 / -)', bg: '#f1f3f4', text: '#5f6368', desc: 'Kedua stok bernilai kosong, null, 0, atau tidak ditemukan di sistem.' }
+  ];
+  
+  for (var k = 0; k < legendItems.length; k++) {
+    var rIdx = legendStartRow + 1 + k;
+    var leg = legendItems[k];
+    
+    var badgeCell = outSheet.getRange(rIdx, 2);
+    badgeCell.setValue(leg.label).setBackground(leg.bg).setFontColor(leg.text).setFontWeight('bold').setHorizontalAlignment('center');
+    badgeCell.setBorder(true, true, true, true, true, true, '#d0d7de', SpreadsheetApp.BorderStyle.SOLID);
+    
+    var descCell = outSheet.getRange(rIdx, 3, 1, 6).merge();
+    descCell.setValue(leg.desc).setFontSize(10).setFontColor('#3c4043');
   }
   
   outSheet.setFrozenRows(headerRow);
